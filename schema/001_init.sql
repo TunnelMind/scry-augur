@@ -52,7 +52,7 @@ CREATE INDEX IF NOT EXISTS idx_actor_infra_links_obs ON actor_infra_links(infra_
 -- but seeding here documents the intended source list.
 INSERT INTO infra_sources (id, name, url, license, redistributable) VALUES
     ('urlhaus', 'URLhaus (abuse.ch)', 'https://urlhaus.abuse.ch/downloads/csv_recent/', 'CC0', true),
-    ('threatfox', 'ThreatFox (abuse.ch)', 'https://threatfox-api.abuse.ch/api/v1/', 'CC0', true),
+    ('threatfox', 'ThreatFox (abuse.ch)', 'https://threatfox.abuse.ch/export/json/recent/', 'CC0', true),
     ('tor_exit', 'Tor Project exit list', 'https://check.torproject.org/torbulkexitlist', 'public', true),
     ('spamhaus_drop', 'Spamhaus DROP', 'https://www.spamhaus.org/drop/drop.txt', 'free non-commercial', false),
     ('crtsh', 'crt.sh CT log search', 'https://crt.sh', 'public', true)

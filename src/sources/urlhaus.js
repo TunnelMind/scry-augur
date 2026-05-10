@@ -38,22 +38,26 @@ const SOURCE_ID = "urlhaus";
 function fetchWithCertInfo(url, headers) {
   return new Promise((resolve, reject) => {
     const req = httpsRequest(url, { method: "GET", headers }, (res) => {
+      // Capture cert info now — `res.socket` may be released back to the
+      // agent pool (or destroyed) by the time 'end' fires for a small
+      // response. The TLS handshake is already complete here.
+      // pubkey is a Buffer of the SPKI in DER form; hashing it gives a
+      // stable fingerprint across cert renewals when the key isn't rotated.
+      const cert = res.socket?.getPeerCertificate?.(true) ?? null;
+      const spkiSha256 = cert?.pubkey
+        ? createHash("sha256").update(cert.pubkey).digest("base64")
+        : null;
+      const issuer = cert?.issuer?.O || cert?.issuer?.CN || null;
+      const subject = cert?.subject?.CN || null;
+      const validTo = cert?.valid_to || null;
       const chunks = [];
       res.on("data", (c) => chunks.push(c));
       res.on("end", () => {
-        const cert = res.socket.getPeerCertificate(true);
-        // pubkey is a Buffer of the SPKI in DER form. Hash gives a stable
-        // fingerprint across cert renewals when the key isn't rotated.
-        const spkiSha256 = cert?.pubkey
-          ? createHash("sha256").update(cert.pubkey).digest("base64")
-          : null;
         resolve({
           status: res.statusCode,
           body: Buffer.concat(chunks).toString("utf8"),
           spki_sha256: spkiSha256,
-          issuer: cert?.issuer?.O || cert?.issuer?.CN || null,
-          subject: cert?.subject?.CN || null,
-          valid_to: cert?.valid_to || null,
+          issuer, subject, valid_to: validTo,
         });
       });
     });

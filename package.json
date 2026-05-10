@@ -7,7 +7,8 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "smoke:urlhaus": "node scripts/smoke-urlhaus.js"
+    "smoke:urlhaus": "node scripts/smoke-urlhaus.js",
+    "smoke:threatfox": "node scripts/smoke-threatfox.js"
   },
   "engines": {
     "node": ">=22.0.0"

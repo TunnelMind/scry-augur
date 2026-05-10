@@ -26,17 +26,23 @@ Augur joins directly with scry-server's `actors`):
 
 Schema in `schema/001_init.sql`.
 
-## v0.1 (this commit)
+## Sources
 
-- URLhaus only. CSV pull every 30 min, ON-CONFLICT-update on re-runs.
-- Materializer joins actors↔infra on IP equality.
-- Smoke test in `scripts/smoke-urlhaus.js`.
+| Source | Endpoint | License | Notes |
+|--------|----------|---------|-------|
+| URLhaus | `https://urlhaus.abuse.ch/downloads/csv_recent/` | CC0 | CSV, anonymous, ~28k rows / cycle |
+| ThreatFox | `https://threatfox.abuse.ch/export/json/recent/` | CC0 | Static bulk JSON dump (anonymous). The POST API requires an Auth-Key as of 2025-01-01; we use the bulk dump instead. |
+
+Materializer joins actors↔infra on IP equality and promotes observations
+to `defender_promoted=1` when ≥2 sources agree on the same threat class
+(`hostile`, `tor_exit`, `scanner`, `netblock`).
+
+Smoke tests: `scripts/smoke-urlhaus.js`, `scripts/smoke-threatfox.js`.
 
 ## To add next
 
-- ThreatFox (JSON API, stronger taxonomy)
-- Tor Project exit list
-- Spamhaus DROP/EDROP
+- Tor Project exit list (public, no auth)
+- Spamhaus DROP/EDROP (free non-commercial)
 - crt.sh CT-log search
 - `enrichment_count` column on scry-server's `/v1/check/{ip}` response
 

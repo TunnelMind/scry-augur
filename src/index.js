@@ -5,6 +5,7 @@
 // add new sources under src/sources/ and register them below.
 
 import { runUrlhaus } from "./sources/urlhaus.js";
+import { runThreatfox } from "./sources/threatfox.js";
 import { runMaterializer } from "./materializer.js";
 import { shutdown } from "./db.js";
 
@@ -12,6 +13,7 @@ const SOURCE_INTERVAL_MS = parseInt(process.env.SOURCE_INTERVAL_MS, 10) || 30 * 
 
 const SOURCES = [
   { name: "urlhaus", run: runUrlhaus },
+  { name: "threatfox", run: runThreatfox },
   // Add more here as they're implemented.
 ];
 
