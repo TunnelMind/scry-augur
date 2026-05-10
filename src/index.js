@@ -6,6 +6,7 @@
 
 import { runUrlhaus } from "./sources/urlhaus.js";
 import { runThreatfox } from "./sources/threatfox.js";
+import { runTorExit } from "./sources/tor_exit.js";
 import { runMaterializer } from "./materializer.js";
 import { shutdown } from "./db.js";
 
@@ -14,6 +15,7 @@ const SOURCE_INTERVAL_MS = parseInt(process.env.SOURCE_INTERVAL_MS, 10) || 30 * 
 const SOURCES = [
   { name: "urlhaus", run: runUrlhaus },
   { name: "threatfox", run: runThreatfox },
+  { name: "tor_exit", run: runTorExit },
   // Add more here as they're implemented.
 ];
 

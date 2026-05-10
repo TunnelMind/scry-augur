@@ -23,69 +23,13 @@
 //     }]
 //   }
 //
-// Cert hygiene mirrors urlhaus.js (red-team round-2 AI-X2). Once we have
-// ≥3 sources doing the same SPKI dance, factor it into a shared helper.
+// Cert hygiene (red-team round-2 AI-X2) lives in lib/cert-fetch.js.
 
-import { execute, queryOne } from "../db.js";
-import { request as httpsRequest } from "node:https";
-import { createHash } from "node:crypto";
+import { execute } from "../db.js";
+import { fetchWithCertInfo, checkAndRecordCertFingerprint } from "../lib/cert-fetch.js";
 
 const BULK_URL = "https://threatfox.abuse.ch/export/json/recent/";
 const SOURCE_ID = "threatfox";
-
-function fetchWithCertInfo(url, headers) {
-  return new Promise((resolve, reject) => {
-    const req = httpsRequest(url, { method: "GET", headers }, (res) => {
-      // Capture cert info now — `res.socket` may be released back to the
-      // agent pool (or destroyed) by the time 'end' fires for a small
-      // response. The TLS handshake is already complete here.
-      const cert = res.socket?.getPeerCertificate?.(true) ?? null;
-      const spkiSha256 = cert?.pubkey
-        ? createHash("sha256").update(cert.pubkey).digest("base64")
-        : null;
-      const issuer = cert?.issuer?.O || cert?.issuer?.CN || null;
-      const subject = cert?.subject?.CN || null;
-      const validTo = cert?.valid_to || null;
-      const chunks = [];
-      res.on("data", (c) => chunks.push(c));
-      res.on("end", () => {
-        resolve({
-          status: res.statusCode,
-          body: Buffer.concat(chunks).toString("utf8"),
-          spki_sha256: spkiSha256,
-          issuer, subject, valid_to: validTo,
-        });
-      });
-    });
-    req.on("error", reject);
-    req.end();
-  });
-}
-
-async function checkAndRecordCertFingerprint(spki, issuer, subject, validTo) {
-  const prev = await queryOne(
-    `SELECT last_seen_spki_sha256 FROM infra_sources WHERE id = $1`,
-    [SOURCE_ID]
-  );
-  const prevSpki = prev?.last_seen_spki_sha256 || null;
-  if (prevSpki && prevSpki !== spki) {
-    console.warn(JSON.stringify({
-      source: SOURCE_ID,
-      event: "cert_spki_changed",
-      severity: "warning",
-      previous_spki: prevSpki,
-      current_spki: spki,
-      issuer, subject, valid_to: validTo,
-      hint: "verify legitimate cert rotation vs MITM before continuing trust",
-    }));
-  }
-  await execute(
-    `UPDATE infra_sources
-        SET last_seen_spki_sha256 = $1, last_seen_spki_at_ms = $2
-      WHERE id = $3`,
-    [spki, Date.now(), SOURCE_ID]
-  );
-}
 
 export async function runThreatfox() {
   const t0 = Date.now();
@@ -95,16 +39,11 @@ export async function runThreatfox() {
   let respStatus;
   try {
     const resp = await fetchWithCertInfo(BULK_URL, {
-      "User-Agent": ua,
-      Accept: "application/json",
+      headers: { "User-Agent": ua, Accept: "application/json" },
     });
     respStatus = resp.status;
     respBody = resp.body;
-    if (resp.spki_sha256) {
-      await checkAndRecordCertFingerprint(
-        resp.spki_sha256, resp.issuer, resp.subject, resp.valid_to
-      );
-    }
+    await checkAndRecordCertFingerprint(SOURCE_ID, resp);
     if (resp.status !== 200) {
       throw new Error(`threatfox HTTP ${resp.status}: ${truncate(resp.body, 200)}`);
     }
