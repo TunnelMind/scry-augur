@@ -1,0 +1,18 @@
+{
+  "name": "scry-augur",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Clearnet recon enricher for the Scry actor graph (P22). Passive aggregator of public threat-intel feeds (URLhaus, ThreatFox, CT, etc.) — never an active prober.",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "smoke:urlhaus": "node scripts/smoke-urlhaus.js"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "dependencies": {
+    "pg": "^8.13.0"
+  }
+}
