@@ -1,5 +1,12 @@
 // URLhaus (abuse.ch) source.
 //
+// SECURITY (red-team round-2 AI-X2): we don't pin the cert (operational
+// pain on rotation outweighs the marginal threat at this scale), but we
+// DO log the SubjectPublicKeyInfo SHA256 each fetch and WARN if it
+// changes from the previously-seen value. SPKI hashes are stable across
+// cert renewals as long as the key stays the same — change implies key
+// rotation OR MITM. Operator can investigate and decide.
+//
 // Public CSV: https://urlhaus.abuse.ch/downloads/csv_recent/
 // License: CC0. Redistributable.
 //
@@ -14,10 +21,78 @@
 // Hard rule: never re-fetch the URL. URLhaus tells us the URL exists; that's
 // enough. Confirming it's still live would make us an active prober.
 
-import { execute } from "../db.js";
+import { execute, queryOne } from "../db.js";
+import { request as httpsRequest } from "node:https";
+import { createHash } from "node:crypto";
 
 const URL_FEED = "https://urlhaus.abuse.ch/downloads/csv_recent/";
 const SOURCE_ID = "urlhaus";
+
+/**
+ * Fetch the URL via node:https so we can inspect the peer cert. We do
+ * full standard TLS validation (default) AND record the SubjectPublicKeyInfo
+ * SHA256. The fingerprint changes whenever the cert key rotates; alerting
+ * on change gives the operator a chance to verify legitimate rotation vs
+ * MITM. (Red-team round-2 AI-X2.)
+ */
+function fetchWithCertInfo(url, headers) {
+  return new Promise((resolve, reject) => {
+    const req = httpsRequest(url, { method: "GET", headers }, (res) => {
+      const chunks = [];
+      res.on("data", (c) => chunks.push(c));
+      res.on("end", () => {
+        const cert = res.socket.getPeerCertificate(true);
+        // pubkey is a Buffer of the SPKI in DER form. Hash gives a stable
+        // fingerprint across cert renewals when the key isn't rotated.
+        const spkiSha256 = cert?.pubkey
+          ? createHash("sha256").update(cert.pubkey).digest("base64")
+          : null;
+        resolve({
+          status: res.statusCode,
+          body: Buffer.concat(chunks).toString("utf8"),
+          spki_sha256: spkiSha256,
+          issuer: cert?.issuer?.O || cert?.issuer?.CN || null,
+          subject: cert?.subject?.CN || null,
+          valid_to: cert?.valid_to || null,
+        });
+      });
+    });
+    req.on("error", reject);
+    req.end();
+  });
+}
+
+async function checkAndRecordCertFingerprint(spki, issuer, subject, validTo) {
+  // Read the previously-seen SPKI from a dedicated column (added by
+  // schema/003_cert_fingerprint.sql). Compare and warn on change.
+  const prev = await queryOne(
+    `SELECT last_seen_spki_sha256 FROM infra_sources WHERE id = $1`,
+    [SOURCE_ID]
+  );
+  const prevSpki = prev?.last_seen_spki_sha256 || null;
+  if (prevSpki && prevSpki !== spki) {
+    // Structured warning so the operator can grep / pipe to alerting later.
+    // We do NOT abort the fetch — false positives during legit rotation
+    // would silence the source entirely; instead we log and let a human
+    // confirm. (Future: if augur runs unattended for weeks, escalate via
+    // an alert source.)
+    console.warn(JSON.stringify({
+      source: SOURCE_ID,
+      event: "cert_spki_changed",
+      severity: "warning",
+      previous_spki: prevSpki,
+      current_spki: spki,
+      issuer, subject, valid_to: validTo,
+      hint: "verify legitimate cert rotation vs MITM before continuing trust",
+    }));
+  }
+  await execute(
+    `UPDATE infra_sources
+        SET last_seen_spki_sha256 = $1, last_seen_spki_at_ms = $2
+      WHERE id = $3`,
+    [spki, Date.now(), SOURCE_ID]
+  );
+}
 
 export async function runUrlhaus() {
   const t0 = Date.now();
@@ -25,11 +100,17 @@ export async function runUrlhaus() {
 
   let csvText;
   try {
-    const resp = await fetch(URL_FEED, {
-      headers: { "User-Agent": ua, Accept: "text/csv" },
+    const resp = await fetchWithCertInfo(URL_FEED, {
+      "User-Agent": ua,
+      Accept: "text/csv",
     });
-    if (!resp.ok) throw new Error(`urlhaus fetch ${resp.status}`);
-    csvText = await resp.text();
+    if (resp.status !== 200) throw new Error(`urlhaus fetch ${resp.status}`);
+    csvText = resp.body;
+    if (resp.spki_sha256) {
+      await checkAndRecordCertFingerprint(
+        resp.spki_sha256, resp.issuer, resp.subject, resp.valid_to
+      );
+    }
   } catch (e) {
     await recordSourceError(`fetch failed: ${e.message}`);
     throw e;
