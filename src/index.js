@@ -1,8 +1,8 @@
 // scry-augur — entry point.
 //
 // Periodically pulls public threat-intel feeds and joins them with the
-// Familiar-observed actor graph. Currently a single-source POC (URLhaus);
-// add new sources under src/sources/ and register them below.
+// Familiar-observed actor graph. Sources live in src/sources/; register
+// new ones in the SOURCES array below.
 
 import { runUrlhaus } from "./sources/urlhaus.js";
 import { runThreatfox } from "./sources/threatfox.js";
@@ -60,6 +60,8 @@ process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 
 console.log(`scry-augur starting (interval ${SOURCE_INTERVAL_MS}ms)`);
 await cycle();
-setInterval(cycle, SOURCE_INTERVAL_MS).unref();
-// Keep alive until SIGTERM
-setInterval(() => {}, 1 << 30).unref();
+// The interval keeps the event loop alive between cycles. Do NOT call
+// .unref() — pg.Pool releases idle TCP sockets after idleTimeoutMillis,
+// and without a referenced timer the process exits and the container
+// restart-loops. SIGINT/SIGTERM handlers above clear it for clean exit.
+setInterval(cycle, SOURCE_INTERVAL_MS);
