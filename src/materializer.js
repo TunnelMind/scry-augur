@@ -14,16 +14,23 @@ import { execute, query } from "./db.js";
 export async function runMaterializer() {
   const t0 = Date.now();
 
-  // Match actors → infra_observations on IP equality.
+  // Match actors → infra_observations on IP equality OR CIDR containment.
   // INSERT ON CONFLICT DO NOTHING means re-runs are idempotent, and
-  // matched_at_ms reflects the FIRST time we noticed the link, not the most recent.
+  // matched_at_ms reflects the FIRST time we noticed the link.
+  //
+  // Two pathways:
+  //   1. Exact-IP match (URLhaus, ThreatFox, Tor exit) — fast equality
+  //      join, indexed by idx_infra_obs_entity.
+  //   2. CIDR containment (Spamhaus DROP / EDROP) — `<<=` operator on
+  //      inet-cast values. No covering index, but the CIDR list is
+  //      small (~hundreds of entries) so the scan is cheap.
   const r = await execute(
     `INSERT INTO actor_infra_links (actor_id, infra_obs_id, matched_at_ms)
      SELECT a.id, o.id, $1
        FROM actors a
        JOIN infra_observations o
-         ON o.entity_type = 'ip'
-        AND o.entity_value = a.source_ip
+         ON (o.entity_type = 'ip'   AND o.entity_value = a.source_ip)
+         OR (o.entity_type = 'cidr' AND a.source_ip::inet <<= o.entity_value::inet)
      ON CONFLICT (actor_id, infra_obs_id) DO NOTHING`,
     [Date.now()]
   );

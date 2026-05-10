@@ -54,8 +54,9 @@ INSERT INTO infra_sources (id, name, url, license, redistributable) VALUES
     ('urlhaus', 'URLhaus (abuse.ch)', 'https://urlhaus.abuse.ch/downloads/csv_recent/', 'CC0', true),
     ('threatfox', 'ThreatFox (abuse.ch)', 'https://threatfox.abuse.ch/export/json/recent/', 'CC0', true),
     ('tor_exit', 'Tor Project exit list', 'https://check.torproject.org/torbulkexitlist', 'public', true),
+    ('tor_dan', 'Tor exit list (dan.me.uk)', 'https://www.dan.me.uk/torlist/', 'public', true),
     ('spamhaus_drop', 'Spamhaus DROP', 'https://www.spamhaus.org/drop/drop.txt', 'free non-commercial', false),
-    ('crtsh', 'crt.sh CT log search', 'https://crt.sh', 'public', true)
+    ('crtsh', 'crt.sh CT log search', 'https://crt.sh/?q=<query>&output=json', 'public', true)
 ON CONFLICT (id) DO NOTHING;
 
 COMMIT;

@@ -7,16 +7,24 @@
 import { runUrlhaus } from "./sources/urlhaus.js";
 import { runThreatfox } from "./sources/threatfox.js";
 import { runTorExit } from "./sources/tor_exit.js";
+import { runTorDan } from "./sources/tor_dan.js";
+import { runSpamhausDrop } from "./sources/spamhaus_drop.js";
+import { runCrtsh } from "./sources/crtsh.js";
 import { runMaterializer } from "./materializer.js";
 import { shutdown } from "./db.js";
 
 const SOURCE_INTERVAL_MS = parseInt(process.env.SOURCE_INTERVAL_MS, 10) || 30 * 60 * 1000;
 
 const SOURCES = [
-  { name: "urlhaus", run: runUrlhaus },
-  { name: "threatfox", run: runThreatfox },
-  { name: "tor_exit", run: runTorExit },
-  // Add more here as they're implemented.
+  { name: "urlhaus",       run: runUrlhaus },
+  { name: "threatfox",     run: runThreatfox },
+  { name: "tor_exit",      run: runTorExit },
+  { name: "tor_dan",       run: runTorDan },
+  { name: "spamhaus_drop", run: runSpamhausDrop },
+  // crtsh runs LAST — it queries domains we just learned about from
+  // upstream feeds, so running it after the feeds widens its inputs
+  // by one cycle.
+  { name: "crtsh",         run: runCrtsh },
 ];
 
 let running = false;
