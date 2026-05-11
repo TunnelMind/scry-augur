@@ -23,8 +23,20 @@ import { execute, query } from "../db.js";
 import { fetchWithCertInfo, checkAndRecordCertFingerprint } from "../lib/cert-fetch.js";
 
 const SOURCE_ID = "crtsh";
-const PER_CYCLE_QUERIES = parseInt(process.env.CRTSH_PER_CYCLE, 10) || 5;
-const PER_QUERY_TIMEOUT_MS = parseInt(process.env.CRTSH_TIMEOUT_MS, 10) || 15_000;
+// crt.sh's Postgres-backed search is slow (~20s for successful queries),
+// and its CF-fronted CDN aggressively 502s when it sees burst traffic.
+// Tunings (verified empirically against the live endpoint from the VPS):
+//   - PER_QUERY_TIMEOUT_MS: must be >20s or we abort real wins. 45s headroom.
+//   - INTER_QUERY_DELAY_MS: ~4s between queries to dodge the burst detector.
+//   - PER_CYCLE_QUERIES: lower count beats more retries — 3 is the sweet spot.
+//   - RETRY_BACKOFF_MS: a single retry on 5xx with a 10s back-off catches
+//     the common transient 502.
+const PER_CYCLE_QUERIES = parseInt(process.env.CRTSH_PER_CYCLE, 10) || 3;
+const PER_QUERY_TIMEOUT_MS = parseInt(process.env.CRTSH_TIMEOUT_MS, 10) || 45_000;
+const INTER_QUERY_DELAY_MS = parseInt(process.env.CRTSH_DELAY_MS, 10) || 4_000;
+const RETRY_BACKOFF_MS = parseInt(process.env.CRTSH_RETRY_MS, 10) || 10_000;
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export async function runCrtsh() {
   const t0 = Date.now();
@@ -55,9 +67,11 @@ export async function runCrtsh() {
   let totalCerts = 0;
   let promoted = 0;
   let queriesSucceeded = 0;
+  let retriesUsed = 0;
   const allRows = [];
 
-  for (const { entity_value: target } of targets) {
+  for (let i = 0; i < targets.length; i++) {
+    const target = targets[i].entity_value;
     // Querying the bare hostname (`ftscfs.logicstack.ink`) only matches
     // certs whose name fields contain that exact string — usually zero.
     // The operator-graph value is in the wildcard form: querying
@@ -65,23 +79,28 @@ export async function runCrtsh() {
     // logicstack.ink, surfacing siblings the feed sources don't yet
     // know about.
     const queryStr = wildcardForm(target);
-    try {
-      const certs = await fetchCrtshOnce(queryStr, ua);
+    const result = await queryWithRetry(queryStr, ua);
+    if (result.retried) retriesUsed++;
+    if (result.ok) {
       queriesSucceeded++;
-      totalCerts += certs.length;
-      for (const cert of certs) {
+      totalCerts += result.certs.length;
+      for (const cert of result.certs) {
         for (const obs of buildObservationRowsFromCert(target, queryStr, cert)) {
           allRows.push(obs);
         }
       }
-    } catch (e) {
+    } else {
       console.warn(JSON.stringify({
         source: SOURCE_ID,
         event: "query_failed",
         target,
         query: queryStr,
-        message: e?.message ?? String(e),
+        message: result.message,
       }));
+    }
+    // Inter-query pacing — only between queries, not after the last one.
+    if (i < targets.length - 1 && INTER_QUERY_DELAY_MS > 0) {
+      await sleep(INTER_QUERY_DELAY_MS);
     }
   }
 
@@ -103,8 +122,35 @@ export async function runCrtsh() {
     skipped: allRows.length - promoted,
     queries: targets.length,
     queries_ok: queriesSucceeded,
+    retries_used: retriesUsed,
     duration_ms: Date.now() - t0,
   };
+}
+
+/**
+ * Single-shot fetch wrapped in a 5xx-retry. Returns
+ * `{ ok, certs?, message?, retried }`. Never throws.
+ */
+async function queryWithRetry(queryStr, ua) {
+  let lastMessage = null;
+  let didRetry = false;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const certs = await fetchCrtshOnce(queryStr, ua);
+      return { ok: true, certs, retried: didRetry };
+    } catch (e) {
+      lastMessage = e?.message ?? String(e);
+      // Retry once on transient 5xx; bail immediately on 4xx, JSON errors,
+      // or timeouts (those won't get better by waiting).
+      if (attempt === 0 && /^HTTP 5\d\d/.test(lastMessage)) {
+        didRetry = true;
+        await sleep(RETRY_BACKOFF_MS);
+        continue;
+      }
+      break;
+    }
+  }
+  return { ok: false, message: lastMessage, retried: didRetry };
 }
 
 async function fetchCrtshOnce(domain, ua) {
