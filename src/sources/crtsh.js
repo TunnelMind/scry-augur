@@ -21,6 +21,7 @@
 
 import { execute, query } from "../db.js";
 import { fetchWithCertInfo, checkAndRecordCertFingerprint } from "../lib/cert-fetch.js";
+import { getDomain } from "tldts";
 
 const SOURCE_ID = "crtsh";
 // crt.sh's Postgres-backed search is slow (~20s for successful queries),
@@ -244,27 +245,28 @@ export function buildObservationRowsFromCert(seedTarget, queryStr, cert) {
 
 /**
  * Convert a hostile target into a crt.sh wildcard query that captures
- * sibling SANs from the same operator. For most TLDs we strip to the
- * last 2 labels and prefix `%.`. Bail to the bare target for short
- * names (already at the apex) or names with a "complex" public suffix
- * we'd over-match against (`co.uk`, `com.cn`, `co.jp`, etc.).
+ * sibling SANs from the same operator. For a subdomain (e.g.,
+ * `ftscfs.logicstack.ink`) we want `%.<eTLD+1>` (`%.logicstack.ink`);
+ * for an apex (e.g., `github.com`, `evil.co.uk`) we query as-is to
+ * avoid over-matching every cert in the public suffix.
  *
- * Public suffix list would be more correct but a tiny denylist covers
- * 99% of risk and keeps the deps minimal.
+ * Uses tldts' Mozilla-PSL-backed `getDomain` rather than the previous
+ * hand-maintained `COMPLEX_SUFFIXES` denylist — that approach missed
+ * suffixes like `biz.id`, `pp.ua`, and many ccTLD second-level zones,
+ * sending crt.sh into PG-timeout territory on overly-broad queries.
  */
-const COMPLEX_SUFFIXES = new Set([
-  "co.uk","co.jp","co.kr","co.in","co.za","co.nz","co.il","com.au","com.br",
-  "com.cn","com.tr","com.mx","com.ar","com.tw","com.hk","com.sg","com.vn",
-  "com.pl","com.ua","com.ru","ne.jp","or.jp","ac.jp","ac.uk","gov.uk","org.uk",
-]);
-
 export function wildcardForm(target) {
   if (typeof target !== "string") return target;
-  const labels = target.toLowerCase().split(".").filter(Boolean);
-  if (labels.length < 3) return target;
-  const last2 = labels.slice(-2).join(".");
-  if (COMPLEX_SUFFIXES.has(last2)) return target;
-  return `%.${last2}`;
+  const lower = target.toLowerCase();
+  const registrable = getDomain(lower);
+  // No registrable domain — bare TLD, IP literal, or unparseable. Send
+  // crt.sh whatever the operator stored; failure is the source's own
+  // try/catch concern.
+  if (!registrable) return lower;
+  // Already at the apex (`github.com`, `evil.co.uk`): wildcarding would
+  // over-match all certs under that public suffix.
+  if (lower === registrable) return lower;
+  return `%.${registrable}`;
 }
 
 function parseCrtshTime(raw) {
