@@ -1,5 +1,9 @@
 # scry-augur
 
+> **Part of TunnelMind — the intelligence layer agents call before they trust the internet.**
+> Three lenses on one signed corpus: **Scry** (*who is attacking?*) · **Sigil** (*who can you trust?*) · **Tracker Data API** (*who is watching?*).
+> This repo serves: **Scry** — enriches the Scry actor graph with public threat-intel joins. See [tunnelmind.ai](https://tunnelmind.ai).
+
 Clearnet recon enricher for the Scry actor graph (P22, Phase 2a).
 
 Augur is a **passive aggregator** of public threat-intel feeds — URLhaus,
