@@ -9,6 +9,8 @@ import { runThreatfox } from "./sources/threatfox.js";
 import { runTorExit } from "./sources/tor_exit.js";
 import { runTorDan } from "./sources/tor_dan.js";
 import { runSpamhausDrop } from "./sources/spamhaus_drop.js";
+import { runFeodo } from "./sources/feodo.js";
+import { runEmergingThreats } from "./sources/emerging_threats.js";
 import { runCrtsh } from "./sources/crtsh.js";
 import { runMaterializer } from "./materializer.js";
 import { shutdown } from "./db.js";
@@ -21,6 +23,8 @@ const SOURCES = [
   { name: "tor_exit",      run: runTorExit },
   { name: "tor_dan",       run: runTorDan },
   { name: "spamhaus_drop", run: runSpamhausDrop },
+  { name: "feodo",         run: runFeodo },
+  { name: "emerging_threats", run: runEmergingThreats },
   // crtsh runs LAST — it queries domains we just learned about from
   // upstream feeds, so running it after the feeds widens its inputs
   // by one cycle.
