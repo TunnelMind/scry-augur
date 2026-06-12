@@ -25,15 +25,17 @@
 
 import { execute } from "../db.js";
 import { fetchWithCertInfo, checkAndRecordCertFingerprint } from "../lib/cert-fetch.js";
+import { isV6Cidr } from "../lib/ipv6.js";
 
 const FEED_URL = "https://www.spamhaus.org/drop/drop.txt";
+const FEED_URL_V6 = "https://www.spamhaus.org/drop/dropv6.txt";
 const SOURCE_ID = "spamhaus_drop";
 
 export async function runSpamhausDrop() {
   const t0 = Date.now();
   const ua = process.env.AUGUR_UA || "scry-augur/0.1";
 
-  let body;
+  let body, bodyV6 = "";
   try {
     const resp = await fetchWithCertInfo(FEED_URL, {
       headers: { "User-Agent": ua, Accept: "text/plain" },
@@ -48,7 +50,17 @@ export async function runSpamhausDrop() {
     throw e;
   }
 
-  const entries = parseDropList(body);
+  // DROPv6 is a separate list; a v6 fetch failure must NOT sink the v4 run.
+  try {
+    const respV6 = await fetchWithCertInfo(FEED_URL_V6, {
+      headers: { "User-Agent": ua, Accept: "text/plain" },
+    });
+    if (respV6.status === 200) bodyV6 = respV6.body;
+  } catch {
+    /* best-effort — v4 list already loaded */
+  }
+
+  const entries = [...parseDropList(body), ...parseDropList(bodyV6)];
   const now = Date.now();
   const allRows = entries
     .map((e) => buildObservationRow(e, now))
@@ -80,13 +92,17 @@ async function recordSourceError(msg) {
   );
 }
 
-const DROP_LINE_RE = /^([0-9./]+)\s*;\s*(SBL\d+)/;
-const CIDR_RE = /^(?:0|[1-9]\d?|1\d{2}|2[0-4]\d|25[0-5])(?:\.(?:0|[1-9]\d?|1\d{2}|2[0-4]\d|25[0-5])){3}\/\d{1,2}$/;
+// First whitespace-delimited token before `; SBL<id>` — a v4 or v6 CIDR.
+const DROP_LINE_RE = /^(\S+)\s*;\s*(SBL\d+)/;
+const CIDR_V4_RE = /^(?:0|[1-9]\d?|1\d{2}|2[0-4]\d|25[0-5])(?:\.(?:0|[1-9]\d?|1\d{2}|2[0-4]\d|25[0-5])){3}\/\d{1,2}$/;
 
 /**
- * Parse drop.txt. Returns array of { cidr, sbl_id }.
+ * Parse drop.txt / dropv6.txt (same line format). Returns array of
+ * { cidr, sbl_id }. v6 CIDRs are validated via isV6Cidr so a malformed
+ * value never reaches the materializer's `entity_value::inet` cast.
  */
 export function parseDropList(text) {
+  if (!text) return [];
   const out = [];
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.trim();
@@ -94,7 +110,7 @@ export function parseDropList(text) {
     const m = line.match(DROP_LINE_RE);
     if (!m) continue;
     const [, cidr, sbl] = m;
-    if (!CIDR_RE.test(cidr)) continue;
+    if (!CIDR_V4_RE.test(cidr) && !isV6Cidr(cidr)) continue;
     out.push({ cidr, sbl_id: sbl });
   }
   return out;
