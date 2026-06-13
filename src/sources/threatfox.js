@@ -27,6 +27,7 @@
 
 import { execute } from "../db.js";
 import { fetchWithCertInfo, checkAndRecordCertFingerprint } from "../lib/cert-fetch.js";
+import { isV6 } from "../lib/ipv6.js";
 
 const BULK_URL = "https://threatfox.abuse.ch/export/json/recent/";
 const SOURCE_ID = "threatfox";
@@ -186,10 +187,24 @@ export function mapIoc(iocType, iocValue) {
   if (!iocType || !iocValue) return null;
   switch (String(iocType).toLowerCase()) {
     case "ip:port": {
-      const idx = iocValue.lastIndexOf(":");
-      const ip = idx > -1 ? iocValue.slice(0, idx) : iocValue;
-      const port = idx > -1 ? Number(iocValue.slice(idx + 1)) : null;
-      if (!IPV4_RE.test(ip)) return null;
+      // v4: "1.2.3.4:443". v6: "[2001:db8::1]:443" (bracketed) or a bare v6
+      // literal (every hextet has a colon, so lastIndexOf would mis-split).
+      const v = String(iocValue).trim();
+      let ip, port = null;
+      if (v.startsWith("[")) {
+        const end = v.indexOf("]");
+        if (end === -1) return null;
+        ip = v.slice(1, end);
+        const rest = v.slice(end + 1);
+        if (rest.startsWith(":")) port = Number(rest.slice(1));
+      } else if (isV6(v)) {
+        ip = v; // bare v6, no port
+      } else {
+        const idx = v.lastIndexOf(":");
+        ip = idx > -1 ? v.slice(0, idx) : v;
+        port = idx > -1 ? Number(v.slice(idx + 1)) : null;
+      }
+      if (!IPV4_RE.test(ip) && !isV6(ip)) return null;
       return { entity_type: "ip", entity_value: ip, port: Number.isFinite(port) ? port : null };
     }
     case "domain": {

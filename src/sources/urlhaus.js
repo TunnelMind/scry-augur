@@ -18,6 +18,7 @@
 
 import { execute } from "../db.js";
 import { fetchWithCertInfo, checkAndRecordCertFingerprint } from "../lib/cert-fetch.js";
+import { isV6 } from "../lib/ipv6.js";
 
 const URL_FEED = "https://urlhaus.abuse.ch/downloads/csv_recent/";
 const SOURCE_ID = "urlhaus";
@@ -168,7 +169,7 @@ function buildObservationRows(r) {
     out.push({
       id: `urlhaus:${r.id}:host`,
       source_id: SOURCE_ID,
-      entity_type: looksLikeIpv4(host) ? "ip" : "domain",
+      entity_type: looksLikeIp(host) ? "ip" : "domain",
       entity_value: host,
       threat_type: threat,
       tags,
@@ -226,13 +227,19 @@ function mapThreat(raw) {
 function extractHost(rawUrl) {
   try {
     const u = new URL(rawUrl);
-    return u.hostname || null;
+    if (!u.hostname) return null;
+    // URL.hostname keeps IPv6 literals bracketed (`[2001:db8::1]`); unwrap so
+    // it's stored as a bare ip that matches the materializer's ip join.
+    if (u.hostname.startsWith("[") && u.hostname.endsWith("]")) {
+      return u.hostname.slice(1, -1);
+    }
+    return u.hostname;
   } catch {
     return null;
   }
 }
 
 const IPV4_RE = /^(?:0|[1-9]\d?|1\d{2}|2[0-4]\d|25[0-5])(?:\.(?:0|[1-9]\d?|1\d{2}|2[0-4]\d|25[0-5])){3}$/;
-function looksLikeIpv4(s) {
-  return IPV4_RE.test(s);
+function looksLikeIp(s) {
+  return IPV4_RE.test(s) || isV6(s);
 }
